@@ -19,16 +19,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import webbrowser
 
-# Конфигурация
-BOT_TOKEN = "8433598747:AAFMZ8a2smfkUCfZYsotseUXJkdJqBqyunc"
-ADMIN_IDS = [5080498010]
-SUPPORT_LINK = "@savsis"
-YOOMONEY_WALLET = "4100118808385925"
-YOOMONEY_CLIENT_ID = "096257E21E2151ABB89C4D4EEE151189774A14E3F40AE665D9E033FB410BE83E"
-YOOMONEY_CLIENT_SECRET = "your_client_secret"  # Замените на реальный
-YOOMONEY_REDIRECT_URI = "http://localhost:8080/callback"
-YOOMONEY_ACCESS_TOKEN = None
-LOCAL_SERVER_PORT = 8080
 
 # Состояния
 (
