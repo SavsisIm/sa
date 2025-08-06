@@ -25,7 +25,7 @@ ADMIN_IDS = [5080498010]
 SUPPORT_LINK = "@savsis"
 YOOMONEY_WALLET = "4100118808385925"
 YOOMONEY_CLIENT_ID = "096257E21E2151ABB89C4D4EEE151189774A14E3F40AE665D9E033FB410BE83E"
-YOOMONEY_CLIENT_SECRET = "your_client_secret"  # Замените на реальный
+YOOMONEY_CLIENT_SECRET = "your_client_secret"
 YOOMONEY_REDIRECT_URI = "http://localhost:8080/callback"
 YOOMONEY_ACCESS_TOKEN = None
 LOCAL_SERVER_PORT = 8080
@@ -34,8 +34,9 @@ LOCAL_SERVER_PORT = 8080
 (
     MAIN_MENU, PROFILE, BALANCE, SUPPORT, 
     ADMIN_PANEL, SHOP, PRODUCT_SELECTION, 
-    PAYMENT_METHOD, CUSTOM_TOPUP
-) = range(9)
+    PAYMENT_METHOD, CUSTOM_TOPUP, ADMIN_STATS,
+    ADMIN_PRODUCTS, ADMIN_KEYS
+) = range(12)
 
 # Настройка логов
 logging.basicConfig(
@@ -43,7 +44,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Класс для локального сервера
 class YooMoneyCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/callback'):
@@ -51,23 +51,32 @@ class YooMoneyCallbackHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/html')
             self.end_headers()
             self.wfile.write(b"<html><body><h1>Authorization successful! You can close this page.</h1></body></html>")
-            
-            # Извлекаем код авторизации
             code = self.path.split('code=')[1].split('&')[0]
             get_access_token(code)
-            
-            # Останавливаем сервер после получения кода
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
-# Функция для запуска локального сервера
 def run_local_server():
     server = HTTPServer(('localhost', LOCAL_SERVER_PORT), YooMoneyCallbackHandler)
     server.serve_forever()
 
-# Получение access token
+def yoomoney_auth():
+    auth_url = (
+        f"https://yoomoney.ru/oauth/authorize?"
+        f"client_id={YOOMONEY_CLIENT_ID}&"
+        f"response_type=code&"
+        f"redirect_uri={YOOMONEY_REDIRECT_URI}&"
+        f"scope=operation-history"
+    )
+    
+    print(f"Откройте эту ссылку для авторизации: {auth_url}")
+    webbrowser.open(auth_url)
+    
+    # Запускаем локальный сервер для получения callback
+    server_thread = threading.Thread(target=run_local_server, daemon=True)
+    server_thread.start()
+
 def get_access_token(auth_code):
     global YOOMONEY_ACCESS_TOKEN
-    
     auth = base64.b64encode(f"{YOOMONEY_CLIENT_ID}:{YOOMONEY_CLIENT_SECRET}".encode()).decode()
     headers = {
         "Authorization": f"Basic {auth}",
@@ -92,7 +101,6 @@ def get_access_token(auth_code):
     else:
         logging.error(f"Ошибка авторизации: {response.text}")
 
-# Проверка платежа через API ЮMoney
 def check_yoomoney_payment(label):
     if not YOOMONEY_ACCESS_TOKEN:
         logging.error("Не установлен access token для API ЮMoney")
@@ -129,7 +137,6 @@ def check_yoomoney_payment(label):
     
     return False
 
-# Инициализация БД
 def init_db():
     conn = sqlite3.connect('shop.db')
     c = conn.cursor()
@@ -192,7 +199,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Генерация ссылки ЮMoney
 def generate_yoomoney_link(amount, label):
     return (
         f"https://yoomoney.ru/quickpay/confirm.xml?"
@@ -204,7 +210,6 @@ def generate_yoomoney_link(amount, label):
         f"label={label}"
     )
 
-# Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     conn = sqlite3.connect('shop.db')
@@ -373,6 +378,7 @@ async def process_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.execute(
                     "UPDATE keys SET used=1 WHERE key_text=?",
                     (key[0],)
+                )
                 
                 conn.execute(
                     "INSERT INTO transactions (user_id, amount, type, date, status) VALUES (?, ?, ?, ?, ?)",
@@ -440,6 +446,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.execute(
                 "UPDATE keys SET used=1 WHERE key_text=?",
                 (key[0],)
+            )
             
             conn.commit()
             conn.close()
@@ -724,6 +731,115 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ADMIN_PANEL
 
+async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect('shop.db')
+    
+    users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    active_users = conn.execute("SELECT COUNT(*) FROM users WHERE last_active > datetime('now', '-7 day')").fetchone()[0]
+    transactions_count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+    total_income = conn.execute("SELECT SUM(amount) FROM transactions WHERE amount > 0").fetchone()[0] or 0
+    
+    keys_available = conn.execute("SELECT p.name, COUNT(k.id) FROM keys k JOIN products p ON k.product_id = p.id WHERE k.used=0 GROUP BY p.id").fetchall()
+    
+    conn.close()
+    
+    stats_text = (
+        "📊 Статистика магазина:\n\n"
+        f"👥 Всего пользователей: {users_count}\n"
+        f"👤 Активных (7 дней): {active_users}\n"
+        f"💸 Всего транзакций: {transactions_count}\n"
+        f"💰 Общий доход: {total_income} RUB\n\n"
+        "🔑 Доступные ключи:\n"
+    )
+    
+    for key in keys_available:
+        stats_text += f"- {key[0]}: {key[1]} шт.\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_stats")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_admin")]
+    ]
+    
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        stats_text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ADMIN_STATS
+
+async def show_admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect('shop.db')
+    products = conn.execute("SELECT id, name, price, description FROM products").fetchall()
+    conn.close()
+    
+    keyboard = []
+    for product in products:
+        keyboard.append([InlineKeyboardButton(
+            f"{product[1]} - {product[2]} RUB",
+            callback_data=f"edit_product_{product[0]}"
+        )])
+    
+    keyboard.extend([
+        [InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "🛠️ Управление товарами:\n\n"
+        "Выберите товар для редактирования:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ADMIN_PRODUCTS
+
+async def show_admin_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect('shop.db')
+    products = conn.execute("SELECT id, name FROM products").fetchall()
+    conn.close()
+    
+    keyboard = []
+    for product in products:
+        keyboard.append([InlineKeyboardButton(
+            f"🔑 {product[1]}",
+            callback_data=f"manage_keys_{product[0]}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_admin")])
+    
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "🔑 Управление ключами:\n\n"
+        "Выберите продукт:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ADMIN_KEYS
+
+async def manage_product_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    product_id = int(update.callback_query.data.split('_')[2])
+    
+    conn = sqlite3.connect('shop.db')
+    product = conn.execute("SELECT name FROM products WHERE id=?", (product_id,)).fetchone()
+    keys = conn.execute(
+        "SELECT key_text, used FROM keys WHERE product_id=? ORDER BY used",
+        (product_id,)
+    ).fetchall()
+    conn.close()
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить ключи", callback_data=f"add_keys_{product_id}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_to_keys")]
+    ]
+    
+    keys_text = f"🔑 Ключи для {product[0]}:\n\n"
+    for key in keys:
+        keys_text += f"{'✅' if not key[1] else '❌'} {key[0]}\n"
+    
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        keys_text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query.data in ["back_to_admin", "back_to_keys", "back_to_stats"]:
         await show_admin_panel(update, context)
@@ -765,10 +881,12 @@ def main() -> None:
             ],
             PRODUCT_SELECTION: [
                 CallbackQueryHandler(process_payment, pattern="^pay_"),
+                CallbackQueryHandler(check_payment, pattern="^check_payment$"),
                 CallbackQueryHandler(handle_back, pattern="^back_to_shop$")
             ],
             BALANCE: [
                 CallbackQueryHandler(process_topup, pattern="^topup_"),
+                CallbackQueryHandler(check_topup, pattern="^check_topup$"),
                 CallbackQueryHandler(show_history, pattern="^history$"),
                 CallbackQueryHandler(handle_back, pattern="^back$"),
                 CallbackQueryHandler(handle_back, pattern="^back_to_balance$")
@@ -785,7 +903,22 @@ def main() -> None:
                 CallbackQueryHandler(handle_back, pattern="^back$")
             ],
             ADMIN_PANEL: [
+                CallbackQueryHandler(show_admin_stats, pattern="^admin_stats$"),
+                CallbackQueryHandler(show_admin_products, pattern="^admin_products$"),
+                CallbackQueryHandler(show_admin_keys, pattern="^admin_keys$"),
                 CallbackQueryHandler(handle_back, pattern="^back_to_menu$")
+            ],
+            ADMIN_STATS: [
+                CallbackQueryHandler(show_admin_stats, pattern="^admin_stats$"),
+                CallbackQueryHandler(handle_back, pattern="^back_to_admin$")
+            ],
+            ADMIN_PRODUCTS: [
+                CallbackQueryHandler(handle_back, pattern="^back_to_admin$")
+            ],
+            ADMIN_KEYS: [
+                CallbackQueryHandler(manage_product_keys, pattern="^manage_keys_"),
+                CallbackQueryHandler(handle_back, pattern="^back_to_admin$"),
+                CallbackQueryHandler(handle_back, pattern="^back_to_keys$")
             ]
         },
         fallbacks=[CommandHandler("start", start)],
