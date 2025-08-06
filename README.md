@@ -38,9 +38,35 @@ python3 bot.py
 
 ## Настройка ЮMoney
 
-1. Создайте приложение в [ЮMoney Developer](https://yoomoney.ru/docs/payment-buttons/using-api/forms)
-2. Получите `client_id` и `client_secret`
-3. Укажите `redirect_uri` как `http://localhost:8080/callback`
+### Вариант 1: Полная интеграция с API (рекомендуется)
+
+1. **Регистрация в ЮMoney Developer**:
+   - Перейдите на: https://yoomoney.ru/docs/payment-buttons/using-api/forms
+   - Войдите в аккаунт ЮMoney
+
+2. **Создание приложения**:
+   - Нажмите "Создать приложение"
+   - Заполните форму:
+     - **Название**: `WarChill Shop Bot`
+     - **Описание**: `Telegram бот для продажи ключей`
+     - **Redirect URI**: `http://localhost:8080/callback`
+     - **Права**: `operation-history`
+
+3. **Получение ключей**:
+   - Скопируйте `Client ID` и `Client Secret`
+   - Замените в `bot.py`:
+     ```python
+     YOOMONEY_CLIENT_SECRET = "ваш_реальный_секретный_ключ"
+     ```
+
+### Вариант 2: Упрощенная интеграция (для тестирования)
+
+Если у вас проблемы с получением API ключей, используйте `bot_simple.py`:
+```bash
+python3 bot_simple.py
+```
+
+В этом случае платежи обрабатываются вручную администратором.
 
 ## Структура базы данных
 
